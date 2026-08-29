@@ -27,6 +27,7 @@ def choose_tool(prompt: str, available: list[str]) -> str | None:
         ("mark", "mark_read"),
         ("read", "mark_read"),
         ("save", "save_article"),
+        # ("done", "mark_read")
     ):
         if marker in text and tool in available:
             return tool
@@ -82,15 +83,10 @@ def transition_checks(initial: dict, final: dict, transition: dict) -> list[dict
                 "id": "identity-preserved",
                 "label": "Article identity and title are preserved",
                 "passed": bool(final.get("items"))
-                and {
-                    key: final["items"][0].get(key) for key in ("id", "title")
-                }
-                == {
-                    key: initial["items"][0].get(key) for key in ("id", "title")
-                },
+                and {key: final["items"][0].get(key) for key in ("id", "title")}
+                == {key: initial["items"][0].get(key) for key in ("id", "title")},
                 "observed": {
-                    key: final.get("items", [{}])[0].get(key)
-                    for key in ("id", "title")
+                    key: final.get("items", [{}])[0].get(key) for key in ("id", "title")
                 },
             }
         )
