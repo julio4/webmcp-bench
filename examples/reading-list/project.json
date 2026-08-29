@@ -1,0 +1,229 @@
+{
+  "id": "reading-list",
+  "name": "Agent Reading List",
+  "version": "spec-3",
+  "description": "A cooperative four-state reading-list flow with a native WebMCP demo.",
+  "graph": { "width": 850, "height": 400 },
+  "versions": {
+    "dataset": "dataset-2",
+    "website": "reading-list-webmcp-5",
+    "actor": "deterministic-keyword-1",
+    "verifier": "reading-list-verifier-1"
+  },
+  "tools": [
+    {
+      "id": "save_article",
+      "title": "Save featured article",
+      "description": "Save the featured ‘State Machines for Agents’ article to the user's reading list.",
+      "mutates": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "enum": ["article-42"],
+            "description": "The displayed article identifier."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "prioritize_article",
+      "title": "Prioritize article",
+      "description": "Make the saved article the user's next reading priority.",
+      "mutates": true,
+      "input_schema": { "type": "object", "properties": {}, "additionalProperties": false }
+    },
+    {
+      "id": "remove_article",
+      "title": "Remove article",
+      "description": "Remove the saved article from the user's reading list.",
+      "mutates": true,
+      "input_schema": { "type": "object", "properties": {}, "additionalProperties": false }
+    },
+    {
+      "id": "mark_read",
+      "title": "Mark article as read",
+      "description": "Mark the saved article as read while preserving its identity.",
+      "mutates": true,
+      "input_schema": { "type": "object", "properties": {}, "additionalProperties": false }
+    }
+  ],
+  "states": [
+    {
+      "id": "empty",
+      "name": "Empty",
+      "kind": "entry",
+      "x": 90,
+      "y": 210,
+      "description": "No article is saved.",
+      "invariants": ["The active user is demo-user.", "No duplicate article IDs exist."],
+      "tools": ["save_article"],
+      "fixture": {
+        "id": "fixture-empty",
+        "version": "1",
+        "data": { "user_id": "demo-user", "items": [] }
+      }
+    },
+    {
+      "id": "saved",
+      "name": "Saved",
+      "kind": "normal",
+      "x": 310,
+      "y": 210,
+      "description": "One unread article is saved without priority.",
+      "invariants": ["Exactly one article is saved.", "The active user is demo-user."],
+      "tools": ["prioritize_article", "remove_article", "mark_read"],
+      "fixture": {
+        "id": "fixture-saved",
+        "version": "1",
+        "data": {
+          "user_id": "demo-user",
+          "items": [{ "id": "article-42", "title": "State Machines for Agents", "status": "saved", "priority": false }]
+        }
+      }
+    },
+    {
+      "id": "prioritized",
+      "name": "Prioritized",
+      "kind": "normal",
+      "x": 530,
+      "y": 90,
+      "description": "The unread article is the next priority.",
+      "invariants": ["Exactly one article is saved.", "The active user is demo-user."],
+      "tools": ["mark_read"],
+      "fixture": {
+        "id": "fixture-prioritized",
+        "version": "1",
+        "data": {
+          "user_id": "demo-user",
+          "items": [{ "id": "article-42", "title": "State Machines for Agents", "status": "saved", "priority": true }]
+        }
+      }
+    },
+    {
+      "id": "read",
+      "name": "Read",
+      "kind": "terminal",
+      "x": 750,
+      "y": 210,
+      "description": "The article has been read.",
+      "invariants": ["The article identity is preserved.", "The active user is demo-user."],
+      "tools": [],
+      "fixture": {
+        "id": "fixture-read",
+        "version": "1",
+        "data": {
+          "user_id": "demo-user",
+          "items": [{ "id": "article-42", "title": "State Machines for Agents", "status": "read", "priority": false }]
+        }
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "id": "save",
+      "source": "empty",
+      "target": "saved",
+      "tool": "save_article",
+      "intent": "Save article",
+      "curve": 0,
+      "expected_effects": ["The displayed article is saved once."],
+      "forbidden_effects": ["Do not change the active user.", "Do not create duplicates."],
+      "postconditions": ["State resolves to saved."]
+    },
+    {
+      "id": "prioritize",
+      "source": "saved",
+      "target": "prioritized",
+      "tool": "prioritize_article",
+      "intent": "Prioritize article",
+      "curve": 0,
+      "expected_effects": ["The article priority becomes true."],
+      "forbidden_effects": ["Do not add or remove articles."],
+      "postconditions": ["State resolves to prioritized."]
+    },
+    {
+      "id": "remove",
+      "source": "saved",
+      "target": "empty",
+      "tool": "remove_article",
+      "intent": "Remove article",
+      "curve": -105,
+      "expected_effects": ["The reading list becomes empty."],
+      "forbidden_effects": ["Do not change the active user."],
+      "postconditions": ["State resolves to empty."]
+    },
+    {
+      "id": "finish-saved",
+      "source": "saved",
+      "target": "read",
+      "tool": "mark_read",
+      "intent": "Finish saved article",
+      "curve": 105,
+      "expected_effects": ["The article status becomes read."],
+      "forbidden_effects": ["Do not remove the article."],
+      "postconditions": ["State resolves to read."]
+    },
+    {
+      "id": "finish-priority",
+      "source": "prioritized",
+      "target": "read",
+      "tool": "mark_read",
+      "intent": "Finish priority article",
+      "curve": 0,
+      "expected_effects": ["The article status becomes read and priority clears."],
+      "forbidden_effects": ["Do not remove the article."],
+      "postconditions": ["State resolves to read."]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-save",
+      "version": "1",
+      "status": "active",
+      "transition_id": "save",
+      "prompt": "Save ‘State Machines for Agents’ to my reading list.",
+      "inputs": { "article_id": "article-42" },
+      "expected_outcome": "passed"
+    },
+    {
+      "id": "task-prioritize",
+      "version": "1",
+      "status": "active",
+      "transition_id": "prioritize",
+      "prompt": "Make my saved article the next priority.",
+      "inputs": {},
+      "expected_outcome": "passed"
+    },
+    {
+      "id": "task-remove",
+      "version": "1",
+      "status": "active",
+      "transition_id": "remove",
+      "prompt": "Remove the saved article from my list.",
+      "inputs": {},
+      "expected_outcome": "passed"
+    },
+    {
+      "id": "task-finish-ambiguous",
+      "version": "1",
+      "status": "active",
+      "transition_id": "finish-saved",
+      "prompt": "I’m done with that article.",
+      "inputs": {},
+      "expected_outcome": "failed",
+      "note": "Intentional baseline failure: the scripted actor does not understand ‘done’."
+    },
+    {
+      "id": "task-finish-priority",
+      "version": "1",
+      "status": "active",
+      "transition_id": "finish-priority",
+      "prompt": "Mark the priority article as read.",
+      "inputs": {},
+      "expected_outcome": "passed"
+    }
+  ]
+}

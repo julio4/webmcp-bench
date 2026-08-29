@@ -44,6 +44,8 @@
     .primary { border: 0; background: var(--accent); color: #10210d; border-radius: 8px; padding: 9px 14px; font-weight: 800; cursor: pointer; }
     .primary:hover { background: #b0ff95; }
     .primary:disabled { cursor: wait; opacity: .55; }
+    .secondary { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; color: var(--soft); text-decoration: none; font-size: 12px; font-weight: 700; }
+    .secondary:hover { border-color: #56616d; color: var(--text); }
     .layout { min-height: 0; display: grid; grid-template-columns: 238px minmax(450px, 1fr) 390px; }
     aside, .details { background: var(--panel); min-height: calc(100vh - 68px); }
     aside { border-right: 1px solid var(--line); padding: 19px 12px; }
@@ -143,6 +145,7 @@
       <div class="brand"><div class="mark">S</div><div><div class="eyebrow">WebMCP</div><h1>StateLab</h1></div></div>
       <div class="header-spacer"></div>
       <div class="provider">Daytona sandbox observability</div>
+      <a class="secondary" href="/demo/">Open demo website</a>
       <button class="primary" id="run-button" type="button">Run evaluation</button>
     </header>
     <div class="layout">
@@ -157,7 +160,7 @@
         </div>
         <section class="graph-card" aria-label="Interactive state machine">
           <div class="graph-head"><span class="eyebrow">State machine</span><div class="legend"><span><i class="dot"></i> Untested</span><span><i class="dot running"></i> Running</span><span><i class="dot passed"></i> Passed</span><span><i class="dot failed"></i> Failed</span><span><i class="dot infrastructure_error"></i> Infrastructure</span></div></div>
-          <svg class="canvas" id="graph" viewBox="0 0 850 400" role="group" aria-label="Reading list state machine graph"></svg>
+          <svg class="canvas" id="graph" role="group" aria-label="State machine graph"></svg>
           <div class="graph-foot"><span id="coverage">Coverage —</span><span id="validation">Validating specification…</span></div>
         </section>
       </main>
@@ -165,7 +168,7 @@
     </div>
   </div>
   <script>
-    const ui = { data: null, runId: null, selection: { kind: 'state', id: 'empty' }, tab: 'summary' };
+    const ui = { data: null, runId: null, selection: null, tab: 'summary' };
     const $ = selector => document.querySelector(selector);
     const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
     const pretty = value => JSON.stringify(value, null, 2);
@@ -177,12 +180,15 @@
       return ui.data?.runs.find(run => run.id === ui.runId) || ui.data?.runs[0] || null;
     }
     function activeSpec() { return selectedRun()?.spec_snapshot || ui.data?.spec; }
-    function attemptFor(transitionId) {
-      return selectedRun()?.attempts.find(attempt => attempt.transition_id === transitionId) || null;
+    function tasksForTransition(transitionId) {
+      return activeSpec().tasks.filter(task => task.status === 'active' && task.transition_id === transitionId);
+    }
+    function attemptsFor(transitionId) {
+      return selectedRun()?.attempts.filter(attempt => attempt.transition_id === transitionId) || [];
     }
     function transitionStatus(transitionId) {
-      const attempt = attemptFor(transitionId);
-      if (attempt) return attempt.outcome;
+      const outcomes = attemptsFor(transitionId).map(attempt => attempt.outcome);
+      for (const status of ['infrastructure_error', 'failed', 'running', 'passed']) if (outcomes.includes(status)) return status;
       return selectedRun()?.status === 'running' ? 'queued' : 'untested';
     }
     function nodeStatus(stateId) {
@@ -191,37 +197,41 @@
       for (const status of ['infrastructure_error', 'failed', 'running', 'queued', 'passed']) if (statuses.includes(status)) return status === 'queued' ? 'running' : status;
       return 'untested';
     }
-    function pathFor(t, states) {
+    function edgeGeometry(t, states) {
       const a = states[t.source], b = states[t.target];
-      const ax = a.x + (b.x >= a.x ? 64 : -64), bx = b.x + (b.x >= a.x ? -64 : 64);
-      if (t.id === 'remove') return `M ${a.x-62} ${a.y+21} Q 195 345 ${b.x+62} ${b.y+21}`;
-      if (t.id === 'finish-saved') return `M ${a.x+62} ${a.y+25} Q 535 345 ${b.x-62} ${b.y+25}`;
-      return `M ${ax} ${a.y} L ${bx} ${b.y}`;
-    }
-    function labelFor(t, states) {
-      const a = states[t.source], b = states[t.target];
-      if (t.id === 'remove') return {x: 200, y: 322};
-      if (t.id === 'finish-saved') return {x: 535, y: 321};
-      return {x: (a.x+b.x)/2, y: (a.y+b.y)/2 - 13};
+      const edge = (from, to) => {
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const scale = 1 / Math.max(Math.abs(dx) / 62, Math.abs(dy) / 38);
+        return {x: from.x + dx * scale, y: from.y + dy * scale};
+      };
+      const start = edge(a, b), end = edge(b, a);
+      const dx = end.x - start.x, dy = end.y - start.y, length = Math.hypot(dx, dy) || 1;
+      const curve = Number(t.curve) || 0;
+      const control = {x: (start.x + end.x) / 2 - dy / length * curve, y: (start.y + end.y) / 2 + dx / length * curve};
+      const label = {x: (start.x + 2 * control.x + end.x) / 4, y: (start.y + 2 * control.y + end.y) / 4 - 13};
+      return {path: curve ? `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}` : `M ${start.x} ${start.y} L ${end.x} ${end.y}`, label};
     }
     function renderGraph() {
       const spec = activeSpec();
+      const width = spec.graph?.width || 850, height = spec.graph?.height || 400;
       const states = Object.fromEntries(spec.states.map(state => [state.id, state]));
       const markers = [['untested','#68717d'],['passed','#75e6a4'],['failed','#ff7272'],['infra','#ffba6b'],['running','#6dbdff']]
         .map(([id,color]) => `<marker id="arrow-${id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/></marker>`).join('');
-      const grid = Array.from({length: 13}, (_, i) => `<line class="grid-line" x1="${i*70}" y1="0" x2="${i*70}" y2="400"/><line class="grid-line" x1="0" y1="${i*40}" x2="850" y2="${i*40}"/>`).join('');
+      const grid = `${Array.from({length: Math.floor(width/70)+1}, (_, i) => `<line class="grid-line" x1="${i*70}" y1="0" x2="${i*70}" y2="${height}"/>`).join('')}${Array.from({length: Math.floor(height/40)+1}, (_, i) => `<line class="grid-line" x1="0" y1="${i*40}" x2="${width}" y2="${i*40}"/>`).join('')}`;
       const edges = spec.transitions.map(t => {
-        const status = transitionStatus(t.id), label = labelFor(t, states), selected = ui.selection.kind === 'transition' && ui.selection.id === t.id;
+        const status = transitionStatus(t.id), geometry = edgeGeometry(t, states), selected = ui.selection.kind === 'transition' && ui.selection.id === t.id;
         const width = Math.max(74, t.intent.length * 6.2 + 18);
         return `<g class="edge-group ${status} ${selected?'selected':''}" data-kind="transition" data-id="${esc(t.id)}" role="button" tabindex="0" aria-label="${esc(t.intent)}, ${esc(status)}">
-          <path class="edge" d="${pathFor(t,states)}"/><path class="edge-hit" d="${pathFor(t,states)}"/>
-          <g class="edge-label" transform="translate(${label.x} ${label.y})"><rect x="${-width/2}" y="-10" width="${width}" height="20"/><text>${esc(t.intent)}</text></g></g>`;
+          <path class="edge" d="${geometry.path}"/><path class="edge-hit" d="${geometry.path}"/>
+          <g class="edge-label" transform="translate(${geometry.label.x} ${geometry.label.y})"><rect x="${-width/2}" y="-10" width="${width}" height="20"/><text>${esc(t.intent)}</text></g></g>`;
       }).join('');
       const nodes = spec.states.map(state => {
         const status = nodeStatus(state.id), selected = ui.selection.kind === 'state' && ui.selection.id === state.id;
         const toolText = `${state.tools.length} tool${state.tools.length===1?'':'s'}`;
         return `<g class="node ${status} ${selected?'selected':''}" transform="translate(${state.x-62} ${state.y-38})" data-kind="state" data-id="${esc(state.id)}" role="button" tabindex="0" aria-label="${esc(state.name)} state"><rect width="124" height="76"/><text class="kind" x="13" y="19">${esc(state.kind)}</text><text class="name" x="13" y="40">${esc(state.name)}</text><text class="tools" x="13" y="59">${toolText}</text></g>`;
       }).join('');
+      $('#graph').setAttribute('viewBox', `0 0 ${width} ${height}`);
+      $('#graph').setAttribute('aria-label', `${spec.name} state machine graph`);
       $('#graph').innerHTML = `<defs>${markers}</defs><g opacity=".55">${grid}</g>${edges}${nodes}`;
       $('#graph').querySelectorAll('[data-kind]').forEach(element => {
         const select = () => { ui.selection = {kind: element.dataset.kind, id: element.dataset.id}; ui.tab = 'summary'; renderGraph(); renderDetails(); };
@@ -243,7 +253,8 @@
       $('#run-kicker').textContent = run ? `${shortId(run.id)} · ${run.status}` : 'Reference flow · not run';
       const counts = run?.counts || {passed:0, failed:0, infrastructure_error:0};
       $('#summary').innerHTML = `<div class="stat"><strong>${counts.passed}</strong><span>Passed</span></div><div class="stat"><strong>${counts.failed}</strong><span>Failed</span></div><div class="stat"><strong>${counts.infrastructure_error}</strong><span>Infra</span></div><div class="stat"><strong>${run?.coverage.percent ?? 100}%</strong><span>Coverage</span></div>`;
-      $('#coverage').textContent = `${spec.transitions.length}/${spec.transitions.length} transitions have active tasks · ${spec.states.length} states · ${spec.transitions.length} edges`;
+      const covered = new Set(spec.tasks.filter(task => task.status === 'active').map(task => task.transition_id)).size;
+      $('#coverage').textContent = `${covered}/${spec.transitions.length} transitions have active tasks · ${spec.states.length} states · ${spec.transitions.length} edges`;
       const errors = ui.data.validation_errors;
       $('#validation').innerHTML = errors.length ? `${errors.length} specification error${errors.length===1?'':'s'}` : '<span class="validation-ok">Specification valid</span>';
       const active = Boolean(ui.data.active_run_id);
@@ -286,12 +297,13 @@
       return `<div class="attempt-card"><div class="attempt-head"><span class="tiny">${esc(attempt.id)}</span>${pill(attempt.outcome)}</div><div class="tabs">${tabs.map(tab => `<button type="button" class="tab ${ui.tab===tab?'active':''}" data-tab="${tab}">${tab[0].toUpperCase()+tab.slice(1)}</button>`).join('')}</div><div class="attempt-body">${body}</div></div>`;
     }
     function transitionDetails(transition) {
-      const attempt = attemptFor(transition.id), task = transition.task;
+      const attempts = attemptsFor(transition.id), tasks = tasksForTransition(transition.id);
+      const goals = tasks.length ? tasks.map(task => `<p class="body-copy">“${esc(task.prompt)}”</p>${task.note ? `<p class="tiny">${esc(task.note)}</p>` : ''}`).join('') : '<p class="tiny">No active tasks.</p>';
       return `<div class="eyebrow">${esc(transition.source)} → ${esc(transition.target)}</div><h2>${esc(transition.intent)}</h2>${pill(transitionStatus(transition.id))}
-        <h3>Transition contract</h3><dl class="kv"><dt>Tool</dt><dd>${esc(transition.tool)}</dd><dt>Task coverage</dt><dd>1 active task</dd><dt>Expected target</dt><dd>${esc(transition.target)}</dd></dl>
-        <h3>User goal</h3><p class="body-copy">“${esc(task.prompt)}”</p>${task.note ? `<p class="tiny">${esc(task.note)}</p>` : ''}
+        <h3>Transition contract</h3><dl class="kv"><dt>Tool</dt><dd>${esc(transition.tool)}</dd><dt>Task coverage</dt><dd>${tasks.length} active task${tasks.length===1?'':'s'}</dd><dt>Expected target</dt><dd>${esc(transition.target)}</dd></dl>
+        <h3>User goals</h3>${goals}
         <h3>Expected effects</h3>${list(transition.expected_effects)}<h3>Forbidden effects</h3>${list(transition.forbidden_effects)}<h3>Postconditions</h3>${list(transition.postconditions)}
-        ${attempt ? attemptCard(attempt) : '<div class="empty">Run the evaluation to inspect a Daytona attempt.</div>'}`;
+        ${attempts.length ? attempts.map(attemptCard).join('') : '<div class="empty">Run the evaluation to inspect a Daytona attempt.</div>'}`;
     }
     function renderDetails() {
       const spec = activeSpec();
@@ -299,7 +311,12 @@
       $('#details').innerHTML = item ? (ui.selection.kind === 'state' ? stateDetails(item) : transitionDetails(item)) : '<div class="empty">Select a state or transition.</div>';
       $('#details').querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => { ui.tab = button.dataset.tab; renderDetails(); }));
     }
-    function render() { renderRuns(); renderSummary(); renderGraph(); renderDetails(); }
+    function render() {
+      const spec = activeSpec();
+      const collection = ui.selection?.kind === 'transition' ? spec.transitions : spec.states;
+      if (!ui.selection || !collection.some(item => item.id === ui.selection.id)) ui.selection = {kind: 'state', id: spec.states[0].id};
+      renderRuns(); renderSummary(); renderGraph(); renderDetails();
+    }
     function toast(message) { const element = document.createElement('div'); element.className = 'toast'; element.textContent = message; document.body.append(element); setTimeout(() => element.remove(), 2800); }
     async function refresh() {
       try {
@@ -315,7 +332,7 @@
       try {
         const response = await fetch('/api/runs', {method:'POST'}), body = await response.json();
         if (!response.ok) throw new Error(body.error || 'Could not start run');
-        ui.runId = body.run.id; ui.selection = {kind:'transition', id:'save'}; await refresh();
+        ui.runId = body.run.id; ui.selection = {kind:'transition', id: activeSpec().transitions[0].id}; await refresh();
       } catch (error) { toast(error.message); await refresh(); }
     });
     refresh();

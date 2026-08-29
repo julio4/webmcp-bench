@@ -1,77 +1,43 @@
-"""Tiny deterministic actor and reference website state used inside Daytona."""
+"""Generic sandbox CLI; project behavior comes from an external adapter."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-
-
-TOOLS_BY_STATE = {
-    "empty": ["save_article"],
-    "saved": ["prioritize_article", "remove_article", "mark_read"],
-    "prioritized": ["mark_read"],
-    "read": [],
-}
+from types import ModuleType
 
 
 def now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def resolve_state(data: dict) -> str:
-    items = data.get("items", [])
-    if not items:
-        return "empty"
-    if len(items) != 1:
-        return "unresolved"
-    item = items[0]
-    if item.get("status") == "read":
-        return "read"
-    if item.get("status") == "saved" and item.get("priority") is True:
-        return "prioritized"
-    if item.get("status") == "saved" and item.get("priority") is False:
-        return "saved"
-    return "unresolved"
+def load_adapter(path: Path) -> ModuleType:
+    module_spec = importlib.util.spec_from_file_location(
+        f"statelab_project_{abs(hash(path.resolve()))}", path
+    )
+    if module_spec is None or module_spec.loader is None:
+        raise ValueError(f"Could not load project adapter: {path}")
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    for name in ("resolve_state", "choose_tool", "invoke", "transition_checks"):
+        if not callable(getattr(module, name, None)):
+            raise ValueError(f"Project adapter must define {name}()")
+    return module
 
 
-def choose_tool(prompt: str, available: list[str]) -> str | None:
-    text = prompt.lower()
-    for marker, tool in (
-        ("priorit", "prioritize_article"),
-        ("remove", "remove_article"),
-        ("mark", "mark_read"),
-        ("read", "mark_read"),
-        ("save", "save_article"),
-    ):
-        if marker in text and tool in available:
-            return tool
-    return None
+def available_tools(spec: dict, state_id: str) -> list[str]:
+    state = next((state for state in spec["states"] if state["id"] == state_id), None)
+    return state.get("tools", []) if state else []
 
 
-def invoke(tool: str, data: dict, inputs: dict) -> dict:
-    if tool == "save_article":
-        if data["items"]:
-            raise ValueError("reading list is not empty")
-        data["items"] = [{**inputs["article"], "status": "saved", "priority": False}]
-    elif tool == "prioritize_article":
-        data["items"][0]["priority"] = True
-    elif tool == "remove_article":
-        data["items"] = []
-    elif tool == "mark_read":
-        data["items"][0]["status"] = "read"
-        data["items"][0]["priority"] = False
-    else:
-        raise ValueError(f"unknown tool: {tool}")
-    return {"ok": True, "resolved_state": resolve_state(data)}
-
-
-def evaluate(data: dict, task: dict) -> dict:
+def evaluate(data: dict, task: dict, spec: dict, adapter: ModuleType) -> dict:
     before = json.loads(json.dumps(data))
-    initial_state = resolve_state(data)
-    available = TOOLS_BY_STATE.get(initial_state, [])
-    selected = choose_tool(task["prompt"], available)
+    initial_state = adapter.resolve_state(data)
+    available = available_tools(spec, initial_state)
+    selected = adapter.choose_tool(task["prompt"], available)
     trace = []
     error = None
 
@@ -80,7 +46,7 @@ def evaluate(data: dict, task: dict) -> dict:
     else:
         started = now()
         try:
-            result = invoke(selected, data, task.get("inputs", {}))
+            result = adapter.invoke(selected, data, task.get("inputs", {}))
             trace.append(
                 {
                     "tool": selected,
@@ -90,7 +56,7 @@ def evaluate(data: dict, task: dict) -> dict:
                     "completed_at": now(),
                 }
             )
-        except (KeyError, IndexError, ValueError) as exc:
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
             error = str(exc)
             trace.append(
                 {
@@ -103,39 +69,47 @@ def evaluate(data: dict, task: dict) -> dict:
             )
 
     return {
-        "actor": "deterministic-keyword-v1",
+        "actor": spec["versions"]["actor"],
         "initial_state": initial_state,
-        "discovered_tools": available,
+        "declared_tools": available,
         "selected_tool": selected,
         "tool_trace": trace,
-        "page_events": [
-            {"at": now(), "event": "tools_discovered", "tools": available},
-            {"at": now(), "event": "state_rendered", "state": resolve_state(data)},
+        "adapter_events": [
+            {"at": now(), "event": "declared_tools_loaded", "tools": available},
+            {
+                "at": now(),
+                "event": "state_resolved",
+                "state": adapter.resolve_state(data),
+            },
         ],
         "before": before,
         "after": data,
-        "observed_final_state": resolve_state(data),
+        "observed_final_state": adapter.resolve_state(data),
         "agent_response": error or "Done.",
         "actor_error": error,
     }
 
 
 def main() -> None:
-    if len(sys.argv) != 4 or sys.argv[1] not in {"verify", "act"}:
-        raise SystemExit("usage: sandbox_eval.py verify|act STATE.json ARG")
+    if len(sys.argv) != 6 or sys.argv[3] not in {"verify", "act"}:
+        raise SystemExit(
+            "usage: sandbox_eval.py ADAPTER.py PROJECT.json verify|act STATE.json ARG"
+        )
 
-    action, state_path, argument = sys.argv[1:]
+    adapter_path, project_path, action, state_path, argument = sys.argv[1:]
+    adapter = load_adapter(Path(adapter_path))
+    spec = json.loads(Path(project_path).read_text())
     path = Path(state_path)
     data = json.loads(path.read_text())
 
     if action == "verify":
-        actual = resolve_state(data)
+        actual = adapter.resolve_state(data)
         print(
             json.dumps(
                 {
                     "expected_state": argument,
                     "observed_state": actual,
-                    "available_tools": TOOLS_BY_STATE.get(actual, []),
+                    "available_tools": available_tools(spec, actual),
                     "passed": actual == argument,
                 },
                 separators=(",", ":"),
@@ -144,7 +118,7 @@ def main() -> None:
         return
 
     task = json.loads(Path(argument).read_text())
-    evidence = evaluate(data, task)
+    evidence = evaluate(data, task, spec, adapter)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(data, separators=(",", ":")))
     temporary.replace(path)
