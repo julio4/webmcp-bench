@@ -1,4 +1,4 @@
-"""WebMCP StateLab: run a trusted local project in Daytona and inspect it locally."""
+"""WebMCP-Bench: run a trusted local project in Daytona and inspect it locally."""
 
 from __future__ import annotations
 
@@ -386,7 +386,7 @@ def run_attempt(daytona, run: dict, transition: dict, task: dict) -> dict:
         sandbox = daytona.create(
             CreateSandboxFromSnapshotParams(
                 language="python", ttl_minutes=10,
-                labels={"app": "webmcp-statelab", "project": SPEC["id"], "run": run["id"], "attempt": attempt["id"]},
+                labels={"app": "webmcp-bench", "project": SPEC["id"], "run": run["id"], "attempt": attempt["id"]},
             ),
             timeout=90,
         )

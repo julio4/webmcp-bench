@@ -1,8 +1,8 @@
 {
   "id": "reading-list",
-  "name": "Agent Reading List",
+  "name": "Blog with reading list",
   "version": "spec-3",
-  "description": "A cooperative four-state reading-list flow with a native WebMCP demo.",
+  "description": "A simple blog with reading-list flow.",
   "graph": { "width": 850, "height": 400 },
   "versions": {
     "dataset": "dataset-2",

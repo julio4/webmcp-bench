@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Daytona-backed state-machine evaluation dashboard">
-  <title>WebMCP StateLab</title>
+  <title>WebMCP-Bench</title>
   <style>
     :root {
       color-scheme: dark;
@@ -46,10 +46,9 @@
     .primary:disabled { cursor: wait; opacity: .55; }
     .secondary { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; color: var(--soft); text-decoration: none; font-size: 12px; font-weight: 700; }
     .secondary:hover { border-color: #56616d; color: var(--text); }
-    .layout { min-height: 0; display: grid; grid-template-columns: 238px minmax(450px, 1fr) 390px; }
-    aside, .details { background: var(--panel); min-height: calc(100vh - 68px); }
-    aside { border-right: 1px solid var(--line); padding: 19px 12px; }
-    .details { border-left: 1px solid var(--line); padding: 20px; overflow: auto; }
+    .layout { min-height: 0; display: grid; grid-template-columns: 238px minmax(450px, 1fr); }
+    aside { min-height: calc(100vh - 68px); border-right: 1px solid var(--line); padding: 19px 12px; background: var(--panel); }
+    .details { min-height: 280px; margin-top: 18px; border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; background: rgba(18,21,25,.78); }
     .section-label { display: flex; justify-content: space-between; align-items: center; margin: 0 8px 10px; }
     .tiny { color: var(--muted); font-size: 11px; }
     .run-list { display: grid; gap: 5px; }
@@ -135,14 +134,14 @@
     .empty { min-height: 280px; display: grid; place-items: center; text-align: center; color: var(--muted); font-size: 12px; }
     .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); border: 1px solid var(--line); background: #1c2228; padding: 9px 13px; border-radius: 8px; font-size: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.4); z-index: 10; }
     :focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-    @media (max-width: 1100px) { .layout { grid-template-columns: 200px minmax(430px, 1fr); } .details { grid-column: 1 / -1; min-height: auto; border-left: 0; border-top: 1px solid var(--line); } }
+    @media (max-width: 1100px) { .layout { grid-template-columns: 200px minmax(430px, 1fr); } }
     @media (max-width: 720px) { header { padding: 0 13px; } .provider { display: none; } .layout { display: block; } aside { min-height: auto; border-right: 0; border-bottom: 1px solid var(--line); } .run-list { display: flex; overflow-x: auto; } .run-item { min-width: 170px; } main { padding: 15px; } .topline { align-items: start; flex-direction: column; } .summary { justify-content: start; } .canvas { min-height: 330px; } }
   </style>
 </head>
 <body>
   <div class="shell">
     <header>
-      <div class="brand"><div class="mark">S</div><div><div class="eyebrow">WebMCP</div><h1>StateLab</h1></div></div>
+      <div class="brand"><div class="mark">B</div><div><div class="eyebrow">WebMCP</div><h1>Bench</h1></div></div>
       <div class="header-spacer"></div>
       <div class="provider">Daytona sandbox observability</div>
       <a class="secondary" href="/demo/">Open demo website</a>
@@ -163,8 +162,8 @@
           <svg class="canvas" id="graph" role="group" aria-label="State machine graph"></svg>
           <div class="graph-foot"><span id="coverage">Coverage —</span><span id="validation">Validating specification…</span></div>
         </section>
+        <section class="details" id="details" aria-live="polite"><div class="empty">Select a state or transition to inspect it.</div></section>
       </main>
-      <section class="details" id="details" aria-live="polite"><div class="empty">Select a state or transition to inspect it.</div></section>
     </div>
   </div>
   <script>
