@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Daytona-backed state-machine evaluation dashboard">
+  <title>WebMCP StateLab</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d0f;
+      --panel: #121519;
+      --panel-2: #181c21;
+      --line: #2a3038;
+      --text: #f0f2f4;
+      --muted: #929aa5;
+      --soft: #c4cad1;
+      --accent: #9bf57d;
+      --accent-2: #67d8ff;
+      --passed: #75e6a4;
+      --failed: #ff7272;
+      --infra: #ffba6b;
+      --running: #6dbdff;
+      --untested: #68717d;
+      --radius: 14px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); }
+    button, select { font: inherit; }
+    button { color: inherit; }
+    .shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+    header {
+      height: 68px; display: flex; align-items: center; gap: 18px; padding: 0 22px;
+      border-bottom: 1px solid var(--line); background: rgba(11,13,15,.94); position: sticky; top: 0; z-index: 5;
+    }
+    .brand { display: flex; align-items: center; gap: 11px; min-width: 220px; }
+    .mark { width: 27px; height: 27px; border: 1px solid #5b6b5a; border-radius: 8px; display: grid; place-items: center; color: var(--accent); font-weight: 800; }
+    h1 { font-size: 15px; margin: 0; letter-spacing: .01em; }
+    .eyebrow { color: var(--muted); text-transform: uppercase; font: 700 10px/1.2 ui-monospace, monospace; letter-spacing: .1em; }
+    .header-spacer { flex: 1; }
+    .provider { display: flex; align-items: center; gap: 8px; color: var(--soft); font-size: 12px; }
+    .provider::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px rgba(155,245,125,.65); }
+    .primary { border: 0; background: var(--accent); color: #10210d; border-radius: 8px; padding: 9px 14px; font-weight: 800; cursor: pointer; }
+    .primary:hover { background: #b0ff95; }
+    .primary:disabled { cursor: wait; opacity: .55; }
+    .layout { min-height: 0; display: grid; grid-template-columns: 238px minmax(450px, 1fr) 390px; }
+    aside, .details { background: var(--panel); min-height: calc(100vh - 68px); }
+    aside { border-right: 1px solid var(--line); padding: 19px 12px; }
+    .details { border-left: 1px solid var(--line); padding: 20px; overflow: auto; }
+    .section-label { display: flex; justify-content: space-between; align-items: center; margin: 0 8px 10px; }
+    .tiny { color: var(--muted); font-size: 11px; }
+    .run-list { display: grid; gap: 5px; }
+    .run-item { width: 100%; text-align: left; padding: 11px; border: 1px solid transparent; background: transparent; border-radius: 9px; cursor: pointer; }
+    .run-item:hover { background: var(--panel-2); }
+    .run-item.active { border-color: #3b444e; background: var(--panel-2); }
+    .run-id { display: flex; justify-content: space-between; gap: 8px; font: 600 11px/1.2 ui-monospace, monospace; }
+    .run-meta { color: var(--muted); margin-top: 7px; font-size: 11px; display: flex; justify-content: space-between; }
+    .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--untested); }
+    .dot.passed { background: var(--passed); } .dot.failed { background: var(--failed); }
+    .dot.infrastructure_error, .dot.errored { background: var(--infra); } .dot.running { background: var(--running); }
+    main { padding: 24px; overflow: auto; background: radial-gradient(circle at 60% 10%, rgba(103,216,255,.045), transparent 30%); }
+    .topline { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .titleblock h2 { font-size: 24px; letter-spacing: -.025em; margin: 4px 0 5px; }
+    .titleblock p { color: var(--muted); font-size: 13px; margin: 0; }
+    .summary { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .stat { min-width: 78px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: rgba(18,21,25,.7); }
+    .stat strong { display: block; font-size: 17px; }
+    .stat span { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; text-transform: uppercase; letter-spacing: .06em; }
+    .graph-card { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(18,21,25,.78); overflow: hidden; }
+    .graph-head { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 0 15px; border-bottom: 1px solid var(--line); }
+    .legend { display: flex; gap: 13px; align-items: center; flex-wrap: wrap; color: var(--muted); font-size: 10px; }
+    .legend span { display: flex; gap: 5px; align-items: center; }
+    .canvas { width: 100%; min-height: 420px; display: block; }
+    .grid-line { stroke: #181d22; stroke-width: 1; }
+    .edge { fill: none; stroke: var(--untested); stroke-width: 2; marker-end: url(#arrow-untested); transition: stroke .15s, stroke-width .15s; }
+    .edge-hit { fill: none; stroke: transparent; stroke-width: 18; cursor: pointer; }
+    .edge-group:focus { outline: none; }
+    .edge-group:hover .edge, .edge-group:focus .edge, .edge-group.selected .edge { stroke-width: 4; }
+    .edge-group.passed .edge { stroke: var(--passed); marker-end: url(#arrow-passed); }
+    .edge-group.failed .edge { stroke: var(--failed); marker-end: url(#arrow-failed); }
+    .edge-group.infrastructure_error .edge { stroke: var(--infra); marker-end: url(#arrow-infra); }
+    .edge-group.running .edge, .edge-group.queued .edge { stroke: var(--running); marker-end: url(#arrow-running); stroke-dasharray: 7 6; }
+    .edge-label rect { fill: #171b20; stroke: #333a43; rx: 6; }
+    .edge-label text { fill: var(--soft); font-size: 10px; text-anchor: middle; dominant-baseline: middle; }
+    .node { cursor: pointer; }
+    .node:focus { outline: none; }
+    .node rect { fill: #171b20; stroke: #414953; stroke-width: 1.5; rx: 12; transition: stroke .15s; }
+    .node:hover rect, .node:focus rect, .node.selected rect { stroke: var(--accent-2); stroke-width: 2.5; }
+    .node.passed rect { stroke: var(--passed); } .node.failed rect { stroke: var(--failed); }
+    .node.infrastructure_error rect { stroke: var(--infra); } .node.running rect { stroke: var(--running); }
+    .node .name { fill: var(--text); font-size: 13px; font-weight: 700; }
+    .node .kind { fill: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+    .node .tools { fill: var(--muted); font-size: 9px; }
+    .graph-foot { padding: 11px 15px; color: var(--muted); border-top: 1px solid var(--line); font-size: 11px; display: flex; justify-content: space-between; gap: 12px; }
+    .validation-ok { color: var(--passed); }
+    .details h2 { font-size: 19px; margin: 5px 0 7px; letter-spacing: -.015em; }
+    .details h3 { margin: 20px 0 9px; color: var(--soft); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+    .muted { color: var(--muted); }
+    .body-copy { color: var(--soft); font-size: 13px; line-height: 1.55; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 99px; background: #222830; color: var(--soft); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .pill.passed { background: rgba(117,230,164,.12); color: var(--passed); }
+    .pill.failed { background: rgba(255,114,114,.12); color: var(--failed); }
+    .pill.infrastructure_error, .pill.errored { background: rgba(255,186,107,.12); color: var(--infra); }
+    .pill.running, .pill.queued { background: rgba(109,189,255,.12); color: var(--running); }
+    .list { margin: 8px 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+    .list li { position: relative; padding-left: 15px; color: var(--soft); font-size: 12px; line-height: 1.45; }
+    .list li::before { content: ""; position: absolute; left: 1px; top: 7px; width: 5px; height: 5px; border-radius: 50%; background: #56616d; }
+    .kv { display: grid; grid-template-columns: minmax(90px, .7fr) 1.3fr; gap: 1px; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+    .kv dt, .kv dd { margin: 0; padding: 8px 10px; background: var(--panel-2); font-size: 11px; overflow-wrap: anywhere; }
+    .kv dt { color: var(--muted); } .kv dd { color: var(--soft); font-family: ui-monospace, monospace; }
+    .attempt-card { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .attempt-head { display: flex; align-items: center; justify-content: space-between; padding: 10px; background: var(--panel-2); }
+    .tabs { display: grid; grid-template-columns: repeat(3, 1fr); padding: 4px; background: #0f1215; border-bottom: 1px solid var(--line); }
+    .tab { border: 0; background: transparent; padding: 7px; color: var(--muted); border-radius: 6px; cursor: pointer; font-size: 11px; }
+    .tab.active { background: var(--panel-2); color: var(--text); }
+    .attempt-body { padding: 12px; }
+    .check { display: flex; gap: 9px; align-items: start; padding: 8px 0; border-bottom: 1px solid #22272e; font-size: 11px; }
+    .check:last-child { border: 0; }
+    .check-mark { color: var(--passed); } .check-mark.no { color: var(--failed); }
+    .timeline { display: grid; gap: 0; }
+    .event { display: grid; grid-template-columns: 13px 1fr; gap: 9px; min-height: 48px; }
+    .event-line { position: relative; }
+    .event-line::before { content: ""; position: absolute; left: 5px; top: 15px; bottom: -4px; width: 1px; background: var(--line); }
+    .event:last-child .event-line::before { display: none; }
+    .event-line::after { content: ""; position: absolute; top: 5px; left: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--running); }
+    .event strong { display: block; font-size: 11px; text-transform: capitalize; }
+    .event small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+    pre { margin: 8px 0 0; padding: 10px; border: 1px solid var(--line); background: #0b0e11; color: #bac5ce; border-radius: 8px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    details { border-top: 1px solid var(--line); padding: 9px 0; }
+    details:first-of-type { border-top: 0; }
+    summary { cursor: pointer; color: var(--soft); font-size: 11px; }
+    .empty { min-height: 280px; display: grid; place-items: center; text-align: center; color: var(--muted); font-size: 12px; }
+    .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); border: 1px solid var(--line); background: #1c2228; padding: 9px 13px; border-radius: 8px; font-size: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.4); z-index: 10; }
+    :focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+    @media (max-width: 1100px) { .layout { grid-template-columns: 200px minmax(430px, 1fr); } .details { grid-column: 1 / -1; min-height: auto; border-left: 0; border-top: 1px solid var(--line); } }
+    @media (max-width: 720px) { header { padding: 0 13px; } .provider { display: none; } .layout { display: block; } aside { min-height: auto; border-right: 0; border-bottom: 1px solid var(--line); } .run-list { display: flex; overflow-x: auto; } .run-item { min-width: 170px; } main { padding: 15px; } .topline { align-items: start; flex-direction: column; } .summary { justify-content: start; } .canvas { min-height: 330px; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand"><div class="mark">S</div><div><div class="eyebrow">WebMCP</div><h1>StateLab</h1></div></div>
+      <div class="header-spacer"></div>
+      <div class="provider">Daytona sandbox observability</div>
+      <button class="primary" id="run-button" type="button">Run evaluation</button>
+    </header>
+    <div class="layout">
+      <aside>
+        <div class="section-label"><span class="eyebrow">Runs</span><span class="tiny" id="run-count">0</span></div>
+        <div class="run-list" id="run-list"></div>
+      </aside>
+      <main>
+        <div class="topline">
+          <div class="titleblock"><div class="eyebrow" id="run-kicker">Reference flow</div><h2 id="flow-name">Loading…</h2><p id="flow-description"></p></div>
+          <div class="summary" id="summary"></div>
+        </div>
+        <section class="graph-card" aria-label="Interactive state machine">
+          <div class="graph-head"><span class="eyebrow">State machine</span><div class="legend"><span><i class="dot"></i> Untested</span><span><i class="dot running"></i> Running</span><span><i class="dot passed"></i> Passed</span><span><i class="dot failed"></i> Failed</span><span><i class="dot infrastructure_error"></i> Infrastructure</span></div></div>
+          <svg class="canvas" id="graph" viewBox="0 0 850 400" role="group" aria-label="Reading list state machine graph"></svg>
+          <div class="graph-foot"><span id="coverage">Coverage —</span><span id="validation">Validating specification…</span></div>
+        </section>
+      </main>
+      <section class="details" id="details" aria-live="polite"><div class="empty">Select a state or transition to inspect it.</div></section>
+    </div>
+  </div>
+  <script>
+    const ui = { data: null, runId: null, selection: { kind: 'state', id: 'empty' }, tab: 'summary' };
+    const $ = selector => document.querySelector(selector);
+    const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+    const pretty = value => JSON.stringify(value, null, 2);
+    const shortId = value => value ? value.replace(/^run-/, '').slice(0, 19) : 'No run';
+    const fmtTime = value => value ? new Intl.DateTimeFormat([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}).format(new Date(value)) : '—';
+    const pill = status => `<span class="pill ${esc(status)}"><i class="dot ${esc(status)}"></i>${esc(status.replaceAll('_', ' '))}</span>`;
+
+    function selectedRun() {
+      return ui.data?.runs.find(run => run.id === ui.runId) || ui.data?.runs[0] || null;
+    }
+    function activeSpec() { return selectedRun()?.spec_snapshot || ui.data?.spec; }
+    function attemptFor(transitionId) {
+      return selectedRun()?.attempts.find(attempt => attempt.transition_id === transitionId) || null;
+    }
+    function transitionStatus(transitionId) {
+      const attempt = attemptFor(transitionId);
+      if (attempt) return attempt.outcome;
+      return selectedRun()?.status === 'running' ? 'queued' : 'untested';
+    }
+    function nodeStatus(stateId) {
+      const spec = activeSpec();
+      const statuses = spec.transitions.filter(t => t.source === stateId || t.target === stateId).map(t => transitionStatus(t.id));
+      for (const status of ['infrastructure_error', 'failed', 'running', 'queued', 'passed']) if (statuses.includes(status)) return status === 'queued' ? 'running' : status;
+      return 'untested';
+    }
+    function pathFor(t, states) {
+      const a = states[t.source], b = states[t.target];
+      const ax = a.x + (b.x >= a.x ? 64 : -64), bx = b.x + (b.x >= a.x ? -64 : 64);
+      if (t.id === 'remove') return `M ${a.x-62} ${a.y+21} Q 195 345 ${b.x+62} ${b.y+21}`;
+      if (t.id === 'finish-saved') return `M ${a.x+62} ${a.y+25} Q 535 345 ${b.x-62} ${b.y+25}`;
+      return `M ${ax} ${a.y} L ${bx} ${b.y}`;
+    }
+    function labelFor(t, states) {
+      const a = states[t.source], b = states[t.target];
+      if (t.id === 'remove') return {x: 200, y: 322};
+      if (t.id === 'finish-saved') return {x: 535, y: 321};
+      return {x: (a.x+b.x)/2, y: (a.y+b.y)/2 - 13};
+    }
+    function renderGraph() {
+      const spec = activeSpec();
+      const states = Object.fromEntries(spec.states.map(state => [state.id, state]));
+      const markers = [['untested','#68717d'],['passed','#75e6a4'],['failed','#ff7272'],['infra','#ffba6b'],['running','#6dbdff']]
+        .map(([id,color]) => `<marker id="arrow-${id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/></marker>`).join('');
+      const grid = Array.from({length: 13}, (_, i) => `<line class="grid-line" x1="${i*70}" y1="0" x2="${i*70}" y2="400"/><line class="grid-line" x1="0" y1="${i*40}" x2="850" y2="${i*40}"/>`).join('');
+      const edges = spec.transitions.map(t => {
+        const status = transitionStatus(t.id), label = labelFor(t, states), selected = ui.selection.kind === 'transition' && ui.selection.id === t.id;
+        const width = Math.max(74, t.intent.length * 6.2 + 18);
+        return `<g class="edge-group ${status} ${selected?'selected':''}" data-kind="transition" data-id="${esc(t.id)}" role="button" tabindex="0" aria-label="${esc(t.intent)}, ${esc(status)}">
+          <path class="edge" d="${pathFor(t,states)}"/><path class="edge-hit" d="${pathFor(t,states)}"/>
+          <g class="edge-label" transform="translate(${label.x} ${label.y})"><rect x="${-width/2}" y="-10" width="${width}" height="20"/><text>${esc(t.intent)}</text></g></g>`;
+      }).join('');
+      const nodes = spec.states.map(state => {
+        const status = nodeStatus(state.id), selected = ui.selection.kind === 'state' && ui.selection.id === state.id;
+        const toolText = `${state.tools.length} tool${state.tools.length===1?'':'s'}`;
+        return `<g class="node ${status} ${selected?'selected':''}" transform="translate(${state.x-62} ${state.y-38})" data-kind="state" data-id="${esc(state.id)}" role="button" tabindex="0" aria-label="${esc(state.name)} state"><rect width="124" height="76"/><text class="kind" x="13" y="19">${esc(state.kind)}</text><text class="name" x="13" y="40">${esc(state.name)}</text><text class="tools" x="13" y="59">${toolText}</text></g>`;
+      }).join('');
+      $('#graph').innerHTML = `<defs>${markers}</defs><g opacity=".55">${grid}</g>${edges}${nodes}`;
+      $('#graph').querySelectorAll('[data-kind]').forEach(element => {
+        const select = () => { ui.selection = {kind: element.dataset.kind, id: element.dataset.id}; ui.tab = 'summary'; renderGraph(); renderDetails(); };
+        element.addEventListener('click', select);
+        element.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); } });
+      });
+    }
+    function renderRuns() {
+      const runs = ui.data.runs;
+      $('#run-count').textContent = runs.length;
+      $('#run-list').innerHTML = runs.length ? runs.map(run => `<button class="run-item ${run.id===selectedRun()?.id?'active':''}" data-run="${esc(run.id)}"><span class="run-id"><span>${esc(shortId(run.id))}</span><i class="dot ${esc(run.status)}"></i></span><span class="run-meta"><span>${fmtTime(run.started_at)}</span><span>${run.counts.passed}/${run.coverage.declared} passed</span></span></button>`).join('') : '<div class="empty">No runs yet.</div>';
+      $('#run-list').querySelectorAll('[data-run]').forEach(button => button.addEventListener('click', () => { ui.runId = button.dataset.run; render(); }));
+    }
+    function renderSummary() {
+      const run = selectedRun();
+      const spec = activeSpec();
+      $('#flow-name').textContent = spec.name;
+      $('#flow-description').textContent = run?.error ? `Run error: ${run.error}` : spec.description;
+      $('#run-kicker').textContent = run ? `${shortId(run.id)} · ${run.status}` : 'Reference flow · not run';
+      const counts = run?.counts || {passed:0, failed:0, infrastructure_error:0};
+      $('#summary').innerHTML = `<div class="stat"><strong>${counts.passed}</strong><span>Passed</span></div><div class="stat"><strong>${counts.failed}</strong><span>Failed</span></div><div class="stat"><strong>${counts.infrastructure_error}</strong><span>Infra</span></div><div class="stat"><strong>${run?.coverage.percent ?? 100}%</strong><span>Coverage</span></div>`;
+      $('#coverage').textContent = `${spec.transitions.length}/${spec.transitions.length} transitions have active tasks · ${spec.states.length} states · ${spec.transitions.length} edges`;
+      const errors = ui.data.validation_errors;
+      $('#validation').innerHTML = errors.length ? `${errors.length} specification error${errors.length===1?'':'s'}` : '<span class="validation-ok">Specification valid</span>';
+      const active = Boolean(ui.data.active_run_id);
+      $('#run-button').disabled = active;
+      $('#run-button').textContent = active ? 'Evaluation running…' : 'Run evaluation';
+    }
+    function list(items) { return `<ul class="list">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`; }
+    function stateDetails(state) {
+      const spec = activeSpec();
+      const incoming = spec.transitions.filter(t => t.target === state.id);
+      const outgoing = spec.transitions.filter(t => t.source === state.id);
+      return `<div class="eyebrow">${esc(state.kind)} state</div><h2>${esc(state.name)}</h2><p class="body-copy">${esc(state.description)}</p>
+        <h3>Expected WebMCP tools</h3>${state.tools.length ? list(state.tools) : '<p class="tiny">No tools exposed in this terminal state.</p>'}
+        <h3>Invariants</h3>${list(state.invariants)}
+        <h3>Canonical fixture</h3><dl class="kv"><dt>ID</dt><dd>${esc(state.fixture.id)}</dd><dt>Version</dt><dd>${esc(state.fixture.version)}</dd><dt>Status</dt><dd>declared · deterministic</dd></dl>
+        <h3>Transitions</h3>${list([...incoming.map(t => `${t.intent} → ${state.name}`), ...outgoing.map(t => `${state.name} → ${t.intent}`)])}`;
+    }
+    function summaryTab(attempt) {
+      return `<p class="body-copy">${esc(attempt.reason || 'Attempt is in progress.')}</p>
+        <dl class="kv"><dt>Observed flow</dt><dd>${esc(attempt.observed_initial_state || attempt.source_state)} → ${esc(attempt.observed_final_state || 'pending')}</dd><dt>Failure category</dt><dd>${esc(attempt.failure_category || '—')}</dd><dt>Actor</dt><dd>${esc(attempt.versions.actor)}</dd><dt>Sandbox</dt><dd>${esc(attempt.sandbox.created?.id || 'provisioning')}</dd></dl>
+        <h3>Verifier checks</h3>${attempt.checks?.map(check => `<div class="check"><span class="check-mark ${check.passed?'':'no'}">${check.passed?'✓':'×'}</span><span><strong>${esc(check.label)}</strong><br><span class="muted">Observed: ${esc(typeof check.observed === 'string' ? check.observed : JSON.stringify(check.observed))}</span></span></div>`).join('') || '<p class="tiny">Checks pending.</p>'}`;
+    }
+    function timelineTab(attempt) {
+      const lifecycle = attempt.lifecycle || [];
+      const tools = attempt.actor?.tool_trace || [];
+      return `<div class="timeline">${lifecycle.map(event => `<div class="event"><div class="event-line"></div><div><strong>${esc(event.stage.replaceAll('_',' '))}</strong><small>${fmtTime(event.at)} · ${esc(event.detail)}</small></div></div>`).join('')}</div>
+        <h3>Tool trace</h3>${tools.length ? tools.map(tool => `<details open><summary>${esc(tool.tool)} · ${esc(tool.output?.resolved_state || tool.error || 'called')}</summary><pre>${esc(pretty(tool))}</pre></details>`).join('') : `<p class="tiny">${esc(attempt.actor?.actor_error || 'No tool call recorded yet.')}</p>`}`;
+    }
+    function evidenceTab(attempt) {
+      const sandbox = attempt.sandbox || {};
+      return `<h3>Daytona sandbox</h3><dl class="kv"><dt>Sandbox ID</dt><dd>${esc(sandbox.created?.id || '—')}</dd><dt>Region / target</dt><dd>${esc(sandbox.observed?.target || sandbox.created?.target || '—')}</dd><dt>State observed</dt><dd>${esc(sandbox.observed?.state || sandbox.created?.state || '—')}</dd><dt>vCPU / memory / disk</dt><dd>${esc([sandbox.observed?.cpu, sandbox.observed?.memory, sandbox.observed?.disk].filter(v=>v!==undefined&&v!==null).join(' / ') || '—')}</dd><dt>Cleanup</dt><dd>${esc(sandbox.cleanup)}</dd></dl>
+        <h3>Latest resource metrics</h3><pre>${esc(pretty(sandbox.metrics || {status: sandbox.metrics_error || 'pending'}))}</pre>
+        <h3>Commands</h3>${attempt.commands?.length ? attempt.commands.map(command => `<details><summary>${esc(command.stage)} · exit ${esc(command.exit_code)}</summary><pre>$ ${esc(command.command)}\n${esc(command.stdout)}</pre></details>`).join('') : '<p class="tiny">No command evidence yet.</p>'}
+        <h3>Authoritative state</h3><pre>${esc(pretty(attempt.authoritative_state || {status:'pending'}))}</pre>
+        <h3>Exact versions</h3><pre>${esc(pretty(attempt.versions))}</pre>`;
+    }
+    function attemptCard(attempt) {
+      const tabs = ['summary','timeline','evidence'];
+      const body = ui.tab === 'timeline' ? timelineTab(attempt) : ui.tab === 'evidence' ? evidenceTab(attempt) : summaryTab(attempt);
+      return `<div class="attempt-card"><div class="attempt-head"><span class="tiny">${esc(attempt.id)}</span>${pill(attempt.outcome)}</div><div class="tabs">${tabs.map(tab => `<button type="button" class="tab ${ui.tab===tab?'active':''}" data-tab="${tab}">${tab[0].toUpperCase()+tab.slice(1)}</button>`).join('')}</div><div class="attempt-body">${body}</div></div>`;
+    }
+    function transitionDetails(transition) {
+      const attempt = attemptFor(transition.id), task = transition.task;
+      return `<div class="eyebrow">${esc(transition.source)} → ${esc(transition.target)}</div><h2>${esc(transition.intent)}</h2>${pill(transitionStatus(transition.id))}
+        <h3>Transition contract</h3><dl class="kv"><dt>Tool</dt><dd>${esc(transition.tool)}</dd><dt>Task coverage</dt><dd>1 active task</dd><dt>Expected target</dt><dd>${esc(transition.target)}</dd></dl>
+        <h3>User goal</h3><p class="body-copy">“${esc(task.prompt)}”</p>${task.note ? `<p class="tiny">${esc(task.note)}</p>` : ''}
+        <h3>Expected effects</h3>${list(transition.expected_effects)}<h3>Forbidden effects</h3>${list(transition.forbidden_effects)}<h3>Postconditions</h3>${list(transition.postconditions)}
+        ${attempt ? attemptCard(attempt) : '<div class="empty">Run the evaluation to inspect a Daytona attempt.</div>'}`;
+    }
+    function renderDetails() {
+      const spec = activeSpec();
+      const item = (ui.selection.kind === 'state' ? spec.states : spec.transitions).find(item => item.id === ui.selection.id);
+      $('#details').innerHTML = item ? (ui.selection.kind === 'state' ? stateDetails(item) : transitionDetails(item)) : '<div class="empty">Select a state or transition.</div>';
+      $('#details').querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => { ui.tab = button.dataset.tab; renderDetails(); }));
+    }
+    function render() { renderRuns(); renderSummary(); renderGraph(); renderDetails(); }
+    function toast(message) { const element = document.createElement('div'); element.className = 'toast'; element.textContent = message; document.body.append(element); setTimeout(() => element.remove(), 2800); }
+    async function refresh() {
+      try {
+        const response = await fetch('/api/state', {cache:'no-store'});
+        if (!response.ok) throw new Error(`Dashboard API returned ${response.status}`);
+        ui.data = await response.json();
+        if (!ui.runId || !ui.data.runs.some(run => run.id === ui.runId)) ui.runId = ui.data.runs[0]?.id || null;
+        render();
+      } catch (error) { toast(error.message); }
+    }
+    $('#run-button').addEventListener('click', async () => {
+      $('#run-button').disabled = true;
+      try {
+        const response = await fetch('/api/runs', {method:'POST'}), body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Could not start run');
+        ui.runId = body.run.id; ui.selection = {kind:'transition', id:'save'}; await refresh();
+      } catch (error) { toast(error.message); await refresh(); }
+    });
+    refresh();
+    setInterval(() => { if (ui.data?.active_run_id) refresh(); }, 1000);
+  </script>
+</body>
+</html>
